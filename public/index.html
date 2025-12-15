@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>VocabMaster</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* הגדרה בסיסית ונקייה לגובה מלא */
+      html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden; /* מונע גלילה ברמת הדף */
+        background-color: #f9fafb;
+      }
+      
+      /* הקונטיינר הראשי תופס הכל, והגלילה קורית בתוכו */
+      #root {
+        height: 100%;
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
