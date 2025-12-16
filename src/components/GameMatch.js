@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Lightbulb, Languages, Edit3, Clock, Zap, Brain, Check, Flame, Files } from 'lucide-react';
+import { Lightbulb, Languages, Edit3, Clock, Zap, Brain, Check, Flame, Files, TimerOff } from 'lucide-react';
 import { Header, Button } from './UIComponents';
 import GameLobby from './GameLobby';
 import { useAudio } from '../contexts/AudioContext';
 import { shuffleArray, getHebrewLabel, getScoreColorClass, getNextManualScore } from '../utils';
 
-// הגדרות ברירת מחדל - זמן דלוק כברירת מחדל
 const DEFAULT_MATCH_SETTINGS = {
     isSmartMode: true,
     isTimedMode: true, 
@@ -19,22 +18,16 @@ const CATEGORY_CONFIG = {
     known: { label: 'יודע', color: 'green' }
 };
 
-export default function MatchGame({ words, updateWord, setView }) {
-    // --- הגדרות ושמירה ---
+export default function MatchGame({ words, updateWord, setView, onGameFinish } ) {
     const [settings, setSettings] = useState(() => {
         try {
             const saved = localStorage.getItem('match_settings');
             return saved ? JSON.parse(saved) : DEFAULT_MATCH_SETTINGS;
-        } catch (e) {
-            return DEFAULT_MATCH_SETTINGS;
-        }
+        } catch (e) { return DEFAULT_MATCH_SETTINGS; }
     });
 
-    useEffect(() => {
-        localStorage.setItem('match_settings', JSON.stringify(settings));
-    }, [settings]);
+    useEffect(() => { localStorage.setItem('match_settings', JSON.stringify(settings)); }, [settings]);
 
-    // --- State משחק ---
     const [isPlaying, setIsPlaying] = useState(false);
     const [board, setBoard] = useState(Array(12).fill(null));
     const [selected, setSelected] = useState([]);
@@ -44,19 +37,19 @@ export default function MatchGame({ words, updateWord, setView }) {
     const [showSummary, setShowSummary] = useState(false);
     const [sessionResults, setSessionResults] = useState([]);
     
-    // טיימר, רצף ואנימציות
-    const [timer, setTimer] = useState(30); // התחלה מ-30 שניות
+    // טיימרים וסטייטים חדשים
+    const [timer, setTimer] = useState(30); 
     const [streak, setStreak] = useState(0);
     const [showCombo, setShowCombo] = useState(false);
+    const [showTimeout, setShowTimeout] = useState(false); // סטייט להודעת "הזמן נגמר"
     const [implodingIds, setImplodingIds] = useState([]); 
-    const [isBankPulsing, setIsBankPulsing] = useState(false); // אנימציית הקופה
+    const [isBankPulsing, setIsBankPulsing] = useState(false); 
 
     const hintedWords = useRef(new Set()); 
     const sessionHistory = useRef(new Set()); 
 
     const { playSFX, playMusic, stopMusic, vibrate, speak, audioSettings, setGameScope } = useAudio();
 
-    // פרופיל סאונד
     useEffect(() => {
         setGameScope('MATCH');
         return () => {
@@ -65,25 +58,29 @@ export default function MatchGame({ words, updateWord, setView }) {
         };
     }, []);
 
-    // לוגיקת טיימר
+    // לוגיקת טיימר משודרגת
     useEffect(() => {
-        if (!isPlaying || !settings.isTimedMode || showSummary) return;
+        if (!isPlaying || !settings.isTimedMode || showSummary || showTimeout) return;
         
         if (timer <= 0) {
             stopMusic();
-            setShowSummary(true);
+            setShowTimeout(true); // קודם מציגים "הזמן נגמר"
+            playSFX('FAIL'); // אפקט סיום
+            
+            setTimeout(() => {
+                setShowTimeout(false);
+                setShowSummary(true); // ורק אחרי 2 שניות עוברים לסיכום
+            }, 2000);
             return;
         }
 
         const interval = setInterval(() => {
             setTimer(prev => Math.max(0, prev - 1));
         }, 1000);
-
         return () => clearInterval(interval);
-    }, [timer, isPlaying, showSummary, settings.isTimedMode]);
+    }, [timer, isPlaying, showSummary, showTimeout, settings.isTimedMode]);
 
-
-    // --- לוגיקת מילוי הלוח (זהה למקור) ---
+    // === אלגוריתם המילוי המקורי ===
     const getNextWord = (currentBoard) => {
         const activeCards = currentBoard.filter(c => c !== null);
         const hardCardsCount = activeCards.filter(c => c.wordScore >= 1 && c.wordScore <= 4).length;
@@ -94,23 +91,11 @@ export default function MatchGame({ words, updateWord, setView }) {
         if (hardRatio > 0.6) targetPoolType = 'COOLDOWN'; 
         if (hardRatio < 0.2) targetPoolType = 'HEATUP';   
 
-        let relevantWords = words;
-        if (!settings.isSmartMode) {
-            relevantWords = words.filter(w => {
-                if (w.score === 0 && settings.wordSource.unseen) return true;
-                if (w.score >= 1 && w.score <= 2 && settings.wordSource.learn) return true;
-                if (w.score >= 3 && w.score <= 4 && settings.wordSource.weak) return true;
-                if (w.score >= 5 && settings.wordSource.known) return true;
-                return false;
-            });
-            if (relevantWords.length < 8) relevantWords = words;
-        }
-
-        const availableWords = relevantWords.filter(w => !sessionHistory.current.has(w.id));
+        const availableWords = words.filter(w => !sessionHistory.current.has(w.id));
         
         if (availableWords.length === 0) {
             sessionHistory.current.clear();
-            return relevantWords[Math.floor(Math.random() * relevantWords.length)];
+            return words[Math.floor(Math.random() * words.length)];
         }
 
         const pools = {
@@ -136,7 +121,7 @@ export default function MatchGame({ words, updateWord, setView }) {
                 else finalPool = availableWords;
             }
         } else {
-            finalPool = availableWords;
+             finalPool = availableWords; 
         }
 
         if (finalPool.length === 0) finalPool = availableWords;
@@ -175,7 +160,6 @@ export default function MatchGame({ words, updateWord, setView }) {
             newCardsBuffer.push(createCard(initWords[5], 'EN'));
             newCardsBuffer.push(createCard(initWords[6], 'HE'));
             newCardsBuffer.push(createCard(initWords[7], 'HE'));
-
         } else {
             const idCounts = {};
             activeCards.forEach(c => idCounts[c.wordId] = (idCounts[c.wordId] || 0) + 1);
@@ -228,14 +212,14 @@ export default function MatchGame({ words, updateWord, setView }) {
         return nextBoard;
     };
 
-    // --- אינטראקציה ומשחק ---
     const startGame = () => {
         setBoard(refillBoard(Array(12).fill(null)));
         setMatchesFound(0);
-        setTimer(30); // 30 שניות
+        setTimer(30); 
         setStreak(0);
         setSessionResults([]);
         setIsPlaying(true);
+        setShowTimeout(false);
         playMusic('CALM');
     };
 
@@ -245,7 +229,7 @@ export default function MatchGame({ words, updateWord, setView }) {
         if (selected.length === 1 && selected[0].index === index) { setSelected([]); return; }
         if (selected.find(s => s.index === index)) return;
         
-        playSFX('CLICK');
+        playSFX('MATCH_POP');
         
         const newSelected = [...selected, { ...card, index }];
         setSelected(newSelected);
@@ -256,19 +240,21 @@ export default function MatchGame({ words, updateWord, setView }) {
             const w1 = words.find(w => w.id === c1.wordId);
 
             if (c1.wordId === c2.wordId && c1.type !== c2.type) {
-                // --- הצלחה ---
+                // SUCCESS
                 playSFX('SUCCESS');
                 vibrate(40);
                 setMatchesFound(p => p + 1);
                 
                 if (settings.isTimedMode) setTimer(t => t + 3); 
                 
-                // עדכון קומבו: +5 שניות בונוס כל 5 רצופים
                 const newStreak = streak + 1;
                 setStreak(newStreak);
+                
+                // COMBO
                 if (newStreak % 5 === 0 && newStreak > 0) {
                     setShowCombo(true);
-                    if (settings.isTimedMode) setTimer(t => t + 5); // בונוס קומבו!
+                    if (settings.isTimedMode) setTimer(t => t + 5); 
+                    playSFX('COMBO', Math.min(newStreak / 5, 8));
                     setTimeout(() => setShowCombo(false), 700);
                 }
 
@@ -288,7 +274,7 @@ export default function MatchGame({ words, updateWord, setView }) {
                 }
 
                 setTimeout(() => {
-                    // אפקט שאיבה
+                    playSFX('MATCH_SUCTION');
                     setImplodingIds([c1.id, c2.id]);
                     
                     setTimeout(() => {
@@ -302,15 +288,13 @@ export default function MatchGame({ words, updateWord, setView }) {
                         setIsLocked(false);
                         setHintIndices([]);
                         
-                        // אנימציית קופה
                         setIsBankPulsing(true);
                         setTimeout(() => setIsBankPulsing(false), 300);
-
                     }, 300); 
                 }, delay);
 
             } else {
-                // --- כישלון (כולל מנגנון שריפה) ---
+                // FAIL
                 playSFX('FAIL');
                 vibrate(200);
                 setStreak(0); 
@@ -325,16 +309,11 @@ export default function MatchGame({ words, updateWord, setView }) {
                 });
 
                 setTimeout(() => {
-                    // מנגנון שריפה: מוחקים את הקלפים שטעית בהם (ואת בני הזוג שלהם)
                     const nextBoard = [...board];
                     const idsToBurn = [c1.wordId, c2.wordId];
-                    
                     for (let i = 0; i < nextBoard.length; i++) {
-                        if (nextBoard[i] && idsToBurn.includes(nextBoard[i].wordId)) {
-                            nextBoard[i] = null;
-                        }
+                        if (nextBoard[i] && idsToBurn.includes(nextBoard[i].wordId)) nextBoard[i] = null;
                     }
-                    
                     setBoard(refillBoard(nextBoard));
                     setSelected([]);
                     setIsLocked(false);
@@ -399,7 +378,6 @@ export default function MatchGame({ words, updateWord, setView }) {
                                 <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${settings.isTimedMode ? 'left-1 translate-x-6' : 'left-1'}`} />
                             </button>
                         </div>
-
                         <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
                             <div className="flex justify-between items-center mb-2">
                                 <span className="font-bold text-indigo-900 flex items-center gap-2"><Brain size={18}/> מצב חכם</span>
@@ -409,7 +387,6 @@ export default function MatchGame({ words, updateWord, setView }) {
                             </div>
                             <p className="text-xs text-indigo-700">המערכת תאזן אוטומטית בין מילים חדשות למילים שצריך לחזק.</p>
                         </div>
-
                         {!settings.isSmartMode && (
                             <div className="animate-in slide-in-from-top-2 fade-in">
                                 <label className="text-sm font-bold text-gray-700 block mb-2">מקור מילים (ידני)</label>
@@ -433,7 +410,7 @@ export default function MatchGame({ words, updateWord, setView }) {
     if (showSummary) {
         return (
             <div className="h-[100dvh] bg-gray-50 flex flex-col text-right" dir="rtl">
-                <Header title="סיכום משחק" onBack={() => setView('GAMES_MENU')} subtitle={`בוצעו ${matchesFound} התאמות`} />
+                <Header title="סיכום משחק" onBack={onGameFinish} subtitle={`בוצעו ${matchesFound} התאמות`} />
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                     {sessionResults.map((item, idx) => (
                         <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
@@ -445,7 +422,10 @@ export default function MatchGame({ words, updateWord, setView }) {
                         </div>
                     ))}
                 </div>
-                <div className="p-4 bg-white border-t border-gray-100"><Button onClick={() => setView('GAMES_MENU')} variant="outline" className="w-full">חזור לתפריט</Button></div>
+                {/* כאן משתמשים בפונקציה שמתקבלת מה-App, שבזכות התיקון היא לא מקפיצה מודאל */}
+                <div className="p-4 bg-white border-t border-gray-100">
+                <Button onClick={onGameFinish} variant="outline" className="w-full">חזור לתפריט</Button>
+            </div>
             </div>
         );
     }
@@ -455,7 +435,6 @@ export default function MatchGame({ words, updateWord, setView }) {
              <Header 
                 title="Match" 
                 onBack={() => { stopMusic(); setShowSummary(true); }} 
-                // הקופה החדשה!
                 subtitle={
                   <div className={`flex items-center gap-2 px-4 py-1.5 bg-green-100 text-green-700 rounded-full shadow-sm border border-green-200 transition-all duration-300 ${isBankPulsing ? 'scale-125 bg-green-200 border-green-300' : ''}`}>
                       <Files size={22} className="stroke-2"/> 
@@ -475,6 +454,16 @@ export default function MatchGame({ words, updateWord, setView }) {
             />
             
             <div className="grid grid-cols-3 gap-3 p-4 content-start flex-1 overflow-y-auto relative">
+                {/* הודעת הזמן נגמר */}
+                {showTimeout && (
+                     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-sm animate-in fade-in duration-300">
+                        <div className="bg-white text-red-600 font-black text-4xl px-8 py-6 rounded-3xl shadow-2xl flex flex-col items-center gap-2 animate-bounce">
+                            <TimerOff size={60} />
+                            <div>הזמן נגמר!</div>
+                        </div>
+                    </div>
+                )}
+                
                 {showCombo && (
                     <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none animate-in zoom-in fade-in duration-300">
                         <div className="bg-orange-500 text-white font-black text-4xl px-8 py-4 rounded-3xl shadow-xl transform rotate-[-5deg] border-4 border-yellow-300 flex items-center gap-2">
@@ -511,4 +500,4 @@ export default function MatchGame({ words, updateWord, setView }) {
             <div className="p-4 bg-white border-t border-gray-100"><Button onClick={() => { stopMusic(); setShowSummary(true); }} variant="outline" className="w-full">סיום משחק</Button></div>
         </div>
     );
-}
+};

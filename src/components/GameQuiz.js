@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Loader2, Languages, Edit3, Zap, Brain, Check } from 'lucide-react';
+import { Clock, Loader2, Languages, Edit3, Zap, Brain, Check, AlertTriangle } from 'lucide-react';
 import { Header, Button } from './UIComponents';
 import GameLobby from './GameLobby';
 import { useAudio } from '../contexts/AudioContext';
@@ -9,11 +9,11 @@ const DEFAULT_QUIZ_SETTINGS = {
     isSmartMode: true,
     wordSource: { unseen: true, learn: true, weak: true, known: true },
     questionCount: 20,
-    timerDuration: 10, 
+    timerDuration: 5, // תיקון: 5 שניות
     panicThreshold: 3 
 };
 
-// הגדרת עיצוב לקטגוריות בעברית
+// הגדרות עיצוב לקטגוריות בעברית
 const CATEGORY_CONFIG = {
     unseen: { label: 'חדש', color: 'gray' },
     learn: { label: 'למידה', color: 'indigo' },
@@ -21,7 +21,7 @@ const CATEGORY_CONFIG = {
     known: { label: 'יודע', color: 'green' }
 };
 
-export default function QuizGame({ words, updateWord, setView }) {
+export default function QuizGame({ words, updateWord, setView, onGameFinish  }) {
     const [settings, setSettings] = useState(() => {
         try {
             const saved = localStorage.getItem('quiz_settings');
@@ -44,17 +44,17 @@ export default function QuizGame({ words, updateWord, setView }) {
     const [sessionResults, setSessionResults] = useState([]);
     const [showSummary, setShowSummary] = useState(false);
     const [scoreCount, setScoreCount] = useState(0);
+    const [isPanic, setIsPanic] = useState(false);
 
     const { playSFX, playMusic, stopMusic, vibrate, speak, audioSettings, setGameScope } = useAudio();
 
-    // הגדרת פרופיל QUIZ בכניסה, וחזרה ל-GLOBAL ביציאה
     useEffect(() => {
       setGameScope('QUIZ');
       return () => {
           stopMusic();
           setGameScope('GLOBAL');
       };
-  }, []);
+    }, []);
 
     // לוגיקת טיימר
     useEffect(() => {
@@ -74,31 +74,46 @@ export default function QuizGame({ words, updateWord, setView }) {
 
 
     const startGame = () => {
+        // === לוגיקה מקורית (אלגוריתם חכם) ===
+        const totalWords = words.length;
+        const touchedWords = words.filter(w => w.score > 0).length;
+        const progress = totalWords > 0 ? Math.round((touchedWords / totalWords) * 100) : 0;
+
+        let dist = { unseen: 0, learn: 0, weak: 0, known: 0 };
+        // חלוקת אחוזים לפי התקדמות
+        if (progress <= 10) dist = { unseen: 100, learn: 0, weak: 0, known: 0 };
+        else if (progress <= 30) dist = { unseen: 90, learn: 0, weak: 10, known: 0 };
+        else if (progress <= 60) dist = { unseen: 65, learn: 10, weak: 20, known: 5 };
+        else if (progress <= 90) dist = { unseen: 40, learn: 20, weak: 25, known: 15 };
+        else if (progress <= 99) dist = { unseen: 10, learn: 30, weak: 35, known: 25 };
+        else dist = { unseen: 0, learn: 30, weak: 40, known: 30 };
+
+        const getPool = (min, max) => words.filter(w => w.score >= min && w.score <= max);
+        const pools = {
+            unseen: getPool(0, 0),
+            learn: getPool(1, 2),
+            weak: getPool(3, 4),
+            known: getPool(5, 100).sort((a,b) => a.score - b.score) 
+        };
+
         let qWords = [];
         const target = settings.questionCount;
 
         if (settings.isSmartMode) {
-            const unseen = words.filter(w => w.score === 0);
-            const learn = words.filter(w => w.score >= 1 && w.score <= 2);
-            const weak = words.filter(w => w.score >= 3 && w.score <= 4);
-            const known = words.filter(w => w.score >= 5);
+             Object.keys(dist).forEach(key => {
+                const count = Math.floor((dist[key] / 100) * target);
+                let pool = pools[key];
+                if (key !== 'known') pool = shuffleArray(pool);
+                qWords = [...qWords, ...pool.slice(0, count)];
+            });
 
-            const pUnseen = Math.floor(target * 0.4);
-            const pLearn = Math.floor(target * 0.3);
-            const pWeak = Math.floor(target * 0.2);
-            
-            qWords = [
-                ...shuffleArray(unseen).slice(0, pUnseen),
-                ...shuffleArray(learn).slice(0, pLearn),
-                ...shuffleArray(weak).slice(0, pWeak)
-            ];
-
-            const remaining = target - qWords.length;
-            if (remaining > 0) {
-                const pool = shuffleArray([...known, ...weak, ...learn, ...unseen].filter(w => !qWords.includes(w)));
-                qWords = [...qWords, ...pool.slice(0, remaining)];
+            if (qWords.length < target) {
+                const usedIds = new Set(qWords.map(w => w.id));
+                const backup = shuffleArray(words.filter(w => !usedIds.has(w.id)));
+                qWords = [...qWords, ...backup.slice(0, target - qWords.length)];
             }
         } else {
+            // מצב ידני
             const pool = words.filter(w => {
                 if (w.score === 0 && settings.wordSource.unseen) return true;
                 if (w.score >= 1 && w.score <= 2 && settings.wordSource.learn) return true;
@@ -110,7 +125,7 @@ export default function QuizGame({ words, updateWord, setView }) {
         }
 
         if (qWords.length < 5) {
-            alert("אין מספיק מילים בקטגוריות שנבחרו (צריך לפחות 5).");
+            alert("אין מספיק מילים (מינימום 5)");
             return;
         }
 
@@ -138,16 +153,19 @@ export default function QuizGame({ words, updateWord, setView }) {
     const handleAnswer = (option, isTimeout = false) => {
         const q = questions[current];
         const isCorrect = !isTimeout && option && option.id === q.word.id;
+        const panic = timer < settings.panicThreshold;
         
         setSelectedOpt(option ? option.id : null);
         setFeedback(isCorrect ? 'CORRECT' : 'WRONG');
+        setIsPanic(panic);
         
+        // --- 1. סאונד מיידי ---
         if (isCorrect) {
-            playSFX('SUCCESS');
+            playSFX('CORRECT'); 
             setScoreCount(s => s + 1);
             vibrate(40);
         } else {
-            playSFX('FAIL');
+            playSFX('WRONG');
             vibrate(200);
         }
 
@@ -158,8 +176,10 @@ export default function QuizGame({ words, updateWord, setView }) {
             if (oldScore === 0) newScore = 5; 
             else newScore = Math.min(10, oldScore + 1);
         } else {
-            if (oldScore >= 5) newScore = 3; 
-            else if (oldScore > 1) newScore = oldScore - 1;
+            if (oldScore >= 10) newScore = 4;
+            else if (oldScore >= 5) newScore = (!panic && !isTimeout) ? 3 : 2;
+            else if (oldScore >= 3) newScore = (!panic && !isTimeout) ? oldScore - 1 : oldScore - 2;
+            else newScore = 1; 
         }
         
         if (newScore !== oldScore) {
@@ -168,12 +188,14 @@ export default function QuizGame({ words, updateWord, setView }) {
 
         setSessionResults(prev => [...prev, { ...q.word, score: newScore, correct: isCorrect }]);
 
-        // --- התיקון הקריטי להקראה ---
-        let delay = 1200; // זמן ברירת מחדל
+        // --- 2. דיליי ל-TTS ---
+        let delay = 1200; 
 
         if (audioSettings.tts) {
-            speak(q.word.english);
-            delay = 1800; // הארכת זמן אם יש הקראה
+            setTimeout(() => {
+                 speak(q.word.english);
+            }, 400); // מחכה קצת אחרי הדינג
+            delay = 1800;
         }
 
         setTimeout(() => {
@@ -182,6 +204,7 @@ export default function QuizGame({ words, updateWord, setView }) {
                 setTimer(settings.timerDuration);
                 setFeedback(null);
                 setSelectedOpt(null);
+                setIsPanic(false);
             } else {
                 stopMusic(); 
                 setShowSummary(true);
@@ -262,7 +285,7 @@ export default function QuizGame({ words, updateWord, setView }) {
     if (showSummary) {
         return (
           <div className="h-[100dvh] bg-gray-50 flex flex-col text-right" dir="rtl">
-              <Header title="סיכום מבחן" onBack={() => setView('GAMES_MENU')} subtitle={`ציון: ${scoreCount} מתוך ${questions.length}`} />
+              <Header title="סיכום מבחן" onBack={onGameFinish} subtitle={`ציון: ${scoreCount} מתוך ${questions.length}`} />
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                   {sessionResults.map((item, idx) => {
                       const isSpelling = words.find(w => w.id === item.id)?.flag_spelling;
@@ -282,17 +305,18 @@ export default function QuizGame({ words, updateWord, setView }) {
                       );
                   })}
               </div>
-              <div className="p-4 bg-white border-t border-gray-100"><Button onClick={() => setView('GAMES_MENU')} className="w-full py-4 text-lg">חזור לתפריט</Button></div>
+              <div className="p-4 bg-white border-t border-gray-100">
+                <Button onClick={onGameFinish} className="w-full py-4 text-lg">חזור לתפריט</Button>
+            </div>
           </div>
         );
     }
 
-    // --- מסך 2: המשחק ---
     if (questions.length === 0) return <div className="flex h-screen items-center justify-center bg-gray-50"><Loader2 className="animate-spin text-indigo-600"/></div>;
     const q = questions[current];
     
     const TimerDisplay = () => (
-        <div className={`flex items-center gap-1 font-bold ${timer < 3 ? 'text-red-600' : 'text-indigo-600'}`}>
+        <div className={`flex items-center gap-1 font-bold ${timer < 2 ? 'text-red-500 animate-pulse' : 'text-indigo-600'}`}>
             <span className="text-lg">{Math.ceil(timer)}</span>
             <Clock size={16}/>
         </div>
@@ -314,19 +338,19 @@ export default function QuizGame({ words, updateWord, setView }) {
                     </h2>
                     <p className="text-gray-400 mt-2 text-sm font-medium">בחר את התרגום הנכון</p>
                     
-                    <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-gray-100">
-                         <div className={`h-full transition-all linear ${timer < 3 ? 'bg-red-500' : 'bg-indigo-500'}`} style={{ width: `${(timer / settings.timerDuration) * 100}%` }}></div>
+                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-100">
+                         <div className={`h-full transition-all linear ${timer < 2 ? 'bg-red-500' : 'bg-indigo-500'}`} style={{ width: `${(timer / settings.timerDuration) * 100}%` }}></div>
                     </div>
                 </div>
             </div>
 
             <div className="flex-1 flex flex-col justify-start gap-3 p-6 pt-2">
                 {q.options.map((opt) => {
-                    let btnClass = "bg-white border-2 border-gray-100 text-gray-600 hover:border-indigo-100 shadow-sm";
+                    let btnClass = "bg-white border-2 border-gray-100 text-gray-600 hover:border-gray-200";
                     if (feedback) {
-                        if (opt.id === q.word.id) btnClass = "bg-green-500 border-green-600 text-white font-bold shadow-green-200"; 
-                        else if (opt.id === selectedOpt) btnClass = "bg-red-500 border-red-600 text-white shadow-red-200"; 
-                        else btnClass = "opacity-40 bg-gray-50 border-transparent grayscale"; 
+                        if (opt.id === q.word.id) btnClass = "bg-green-50 border-green-500 text-green-800 font-bold";
+                        else if (opt.id === selectedOpt) btnClass = "bg-red-50 border-red-500 text-red-800";
+                        else btnClass = "opacity-40 bg-gray-50 border-transparent grayscale";
                     }
 
                     return (
@@ -334,7 +358,7 @@ export default function QuizGame({ words, updateWord, setView }) {
                             key={opt.id} 
                             disabled={feedback !== null} 
                             onClick={() => handleAnswer(opt)} 
-                            className={`flex-1 rounded-2xl text-xl font-medium transition-all outline-none active:scale-95 ${btnClass}`}
+                            className={`flex-1 rounded-2xl text-xl font-medium transition-all shadow-sm outline-none active:scale-95 ${btnClass}`}
                             style={{ WebkitTapHighlightColor: 'transparent' }}
                         >
                             {opt.text}
@@ -342,6 +366,11 @@ export default function QuizGame({ words, updateWord, setView }) {
                     );
                 })}
             </div>
+            {feedback === 'WRONG' && isPanic && (
+                 <div className="absolute bottom-4 left-0 right-0 text-center text-red-500 font-bold animate-pulse">
+                     <AlertTriangle size={16} className="inline mr-1"/> לחץ זמן! ענישה כפולה
+                 </div>
+            )}
         </div>
     );
-}
+};

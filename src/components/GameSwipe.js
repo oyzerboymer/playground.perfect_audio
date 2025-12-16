@@ -13,7 +13,6 @@ const DEFAULT_GAME_SETTINGS = {
     feedbackDuration: 0.7
 };
 
-// תרגום קטגוריות לעברית עבור הלובי
 const CATEGORY_CONFIG = {
     unseen: { label: 'חדש', color: 'gray' },
     learn: { label: 'למידה', color: 'indigo' },
@@ -21,7 +20,7 @@ const CATEGORY_CONFIG = {
     known: { label: 'יודע', color: 'green' }
 };
 
-export default function SwipeGame({ words, updateWord, setView }) {
+export default function SwipeGame({ words, updateWord, setView, onGameFinish } ) {
   // --- טעינת הגדרות ---
   const [gameSettings, setGameSettings] = useState(() => {
       try {
@@ -41,7 +40,7 @@ export default function SwipeGame({ words, updateWord, setView }) {
   const [sessionResults, setSessionResults] = useState([]);
   const [showSummary, setShowSummary] = useState(false);
   const [current, setCurrent] = useState(0);
-  
+   
   const [dragStart, setDragStart] = useState(null);
   const [offset, setOffset] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -50,42 +49,45 @@ export default function SwipeGame({ words, updateWord, setView }) {
 
   const { speak, playSFX, vibrate, playMusic, stopMusic, audioSettings, setGameScope } = useAudio();
 
-  // ניקוי מוזיקה ביציאה מהקומפוננטה
-  // הגדרת פרופיל SWIPE בכניסה, וחזרה ל-GLOBAL ביציאה
+  // פרופיל אודיו
   useEffect(() => {
     setGameScope('SWIPE'); 
     return () => {
         stopMusic(); 
         setGameScope('GLOBAL'); 
     };
-}, []);
+  }, []);
 
-  // --- התחלת משחק ---
+  // --- התחלת משחק (עם האלגוריתם המקורי!) ---
   const startGame = () => {
-    let pool = [];
+    const totalWords = words.length;
+    const touchedWords = words.filter(w => w.score > 0).length;
+    const progressPercent = totalWords > 0 ? Math.round((touchedWords / totalWords) * 100) : 0;
+    const unseen = words.filter(w => w.score === 0);
+    const shouldMix = progressPercent > 80;
+
     const targetAmount = gameSettings.amount;
+    let pool = [];
 
     if (gameSettings.isSmartMode) {
-        const totalWords = words.length;
-        const unseen = words.filter(w => w.score === 0);
-        const shouldMix = (words.filter(w => w.score > 0).length / totalWords) > 0.8;
-
+        // === לוגיקה מקורית (משוחזרת) ===
         if (unseen.length > 0 && !shouldMix) {
-           pool = shuffleArray(unseen).slice(0, targetAmount);
+            pool = shuffleArray(unseen).slice(0, targetAmount);
         } else {
-           const learn = words.filter(w => w.score >= 1 && w.score <= 2);
-           const weak = words.filter(w => w.score >= 3 && w.score <= 4);
-           const known = words.filter(w => w.score >= 5).sort((a,b) => a.score - b.score);
-           
-           const partSize = Math.floor(targetAmount * 0.4); 
-           pool = [...shuffleArray(weak).slice(0, partSize), ...shuffleArray(learn).slice(0, partSize)];
-           const remaining = targetAmount - pool.length;
-           if (remaining > 0) {
-               if (known.length > 0) pool = [...pool, ...known.slice(0, remaining)];
-               if (pool.length < targetAmount && unseen.length > 0) pool = [...pool, ...shuffleArray(unseen).slice(0, targetAmount - pool.length)];
-           }
+            const learn = words.filter(w => w.score >= 1 && w.score <= 2);
+            const weak = words.filter(w => w.score >= 3 && w.score <= 4);
+            const known = words.filter(w => w.score >= 5).sort((a,b) => a.score - b.score);
+
+            // חלוקה יחסית לפי גודל היעד
+            const partSize = Math.floor(targetAmount * 0.4); // 40% לכל קבוצה חלשה
+            pool = [...shuffleArray(weak).slice(0, partSize), ...shuffleArray(learn).slice(0, partSize)];
+            
+            const remaining = targetAmount - pool.length;
+            if (remaining > 0 && known.length > 0) pool = [...pool, ...known.slice(0, remaining)];
+            if (pool.length < targetAmount && unseen.length > 0) pool = [...pool, ...shuffleArray(unseen).slice(0, targetAmount - pool.length)];
         }
     } else {
+        // מצב ידני
         pool = words.filter(w => {
             if (w.score === 0 && gameSettings.wordSource.unseen) return true;
             if (w.score >= 1 && w.score <= 2 && gameSettings.wordSource.learn) return true;
@@ -97,7 +99,8 @@ export default function SwipeGame({ words, updateWord, setView }) {
         pool = shuffleArray(pool).slice(0, targetAmount);
     }
 
-    const queueWithLang = pool.map(w => {
+    // הוספת הגדרות שפה לכרטיסים
+    const queueWithLang = shuffleArray(pool).map(w => {
         let showEnglish = true;
         if (gameSettings.languageMode === 'HE') showEnglish = false;
         else if (gameSettings.languageMode === 'MIX') showEnglish = Math.random() > 0.5;
@@ -109,28 +112,31 @@ export default function SwipeGame({ words, updateWord, setView }) {
     playMusic('CALM');
   };
 
-  // --- לוגיקת החלקה ---
+  // --- לוגיקת החלקה (משולבת עם סאונד חדש) ---
   const processSwipe = (direction) => {
       setIsAnimating(true);
       const word = queue[current];
       let newScore = word.score;
 
       if (direction === 'RIGHT') { 
-          playSFX('SUCCESS');
+          playSFX('SWIPE_RIGHT');
           vibrate(40); 
           if (isPeeked) newScore = 3;
           else newScore = word.score < 5 ? 5 : word.score + 1;
       } else { 
-          playSFX('FAIL');
+          playSFX('SWIPE_LEFT');
           vibrate(200); 
           newScore = 1; 
       }
-      
+       
       setOffset(direction === 'RIGHT' ? 800 : -800);
       updateWord(word.id, { score: newScore });
       setSessionResults(prev => [...prev, { ...word, score: newScore }]);
       
-      if (audioSettings.tts && !isPeeked) speak(word.english);
+      // --- תיקון: TTS מופעל מיד ---
+      if (audioSettings.tts && !isPeeked) {
+          speak(word.english);
+      }
 
       const delay = audioSettings.tts ? 1500 : (gameSettings.feedbackDuration * 1000);
 
@@ -140,13 +146,13 @@ export default function SwipeGame({ words, updateWord, setView }) {
           setIsPeeked(false);
           setIsAnimating(false);
       }, 200);
-      
+       
       setTimeout(() => {
           setFeedback(null);
           if (current < queue.length - 1) {
               setCurrent(c => c + 1);
           } else {
-              stopMusic(); // תיקון: עצירת מוזיקה בסיום
+              stopMusic(); 
               setShowSummary(true);
           }
       }, 200 + delay); 
@@ -161,11 +167,19 @@ export default function SwipeGame({ words, updateWord, setView }) {
       setSessionResults(newResults);
       updateWord(item.id, { score: nextScore });
   };
-  
+   
   const handleTouchStart = (e) => { if(!isAnimating && !feedback) setDragStart(e.touches[0].clientX); };
   const handleTouchMove = (e) => { if(dragStart && !isAnimating && !feedback) setOffset(e.touches[0].clientX - dragStart); };
   const handleTouchEnd = () => { if (!dragStart || isAnimating || feedback) return; if (offset > 100) processSwipe('RIGHT'); else if (offset < -100) processSwipe('LEFT'); else setOffset(0); setDragStart(null); };
   const handleManualSpeak = (e, text) => { e.stopPropagation(); speak(text, true); };
+  
+  // --- פונקציית יציאה מסודרת ---
+  const handleExit = (force = false) => {
+    // הפונקציה הזו תועבר מה-App או פשוט נשתמש ב-setView
+    // התיקון האמיתי יבוא ב-App.js, כאן אנחנו רק קוראים לזה
+    stopMusic();
+    setView('GAMES_MENU'); // זה אמור להפעיל את המודאל אם לא תיקנו, אבל נתקן ב-App
+  };
 
   // --- מסך 1: לובי ---
   if (!isPlaying && !showSummary) {
@@ -226,7 +240,7 @@ export default function SwipeGame({ words, updateWord, setView }) {
   if (showSummary) {
       return (
         <div className="h-[100dvh] bg-gray-50 flex flex-col text-right" dir="rtl">
-            <Header title="סיכום סשן" onBack={() => setView('GAMES_MENU')} subtitle="תוצאות המיון" />
+            <Header title="סיכום סשן" onBack={onGameFinish} subtitle="תוצאות המיון" />
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {sessionResults.map((item, idx) => {
                     const isSpelling = words.find(w => w.id === item.id)?.flag_spelling;
@@ -250,7 +264,10 @@ export default function SwipeGame({ words, updateWord, setView }) {
                     );
                 })}
             </div>
-            <div className="p-4 bg-white border-t border-gray-100"><Button onClick={() => setView('GAMES_MENU')} className="w-full py-4 text-lg">סיום וחזרה</Button></div>
+            {/* כפתור יציאה שמשתמש ב-handleExit */}
+            <div className="p-4 bg-white border-t border-gray-100">
+                <Button onClick={onGameFinish} className="w-full py-4 text-lg">סיום וחזרה</Button>
+            </div>
         </div>
     );
   }
@@ -271,7 +288,7 @@ export default function SwipeGame({ words, updateWord, setView }) {
 
   return (
     <div className="h-[100dvh] flex flex-col bg-gray-50" dir="rtl">
-       <Header title="Swipe" onBack={() => setView('GAMES_MENU')} subtitle={`${current + 1} מתוך ${queue.length}`} />
+       <Header title="Swipe" onBack={() => { stopMusic(); setView('GAMES_MENU'); }} subtitle={`${current + 1} מתוך ${queue.length}`} />
 
       <div className="flex-1 relative flex items-center justify-center perspective-1000 p-6 overflow-hidden">
           {!feedback && (
