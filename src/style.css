@@ -1,3 +1,16 @@
+body {
+  /* מונע גלילת יתר "קפיצית" במובייל */
+  overscroll-behavior: none;
+  /* מונע בחירת טקסט בטעות בזמן גרירה/משחק */
+  -webkit-user-select: none;
+  user-select: none;
+  /* גלילה חלקה באייפון */
+  -webkit-overflow-scrolling: touch;
+  /* צבע רקע כללי למניעת הבהובים בטעינה */
+  background-color: #f9fafb;
+  margin: 0;
+}
+
 h1,
 p {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen,

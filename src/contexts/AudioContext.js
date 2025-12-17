@@ -8,10 +8,10 @@ const DEFAULT_LOCAL_SETTINGS = { music: true, sfx: true, tts: true, haptics: tru
 const DEFAULT_GLOBAL_SETTINGS = { isMuted: false, isVibrationEnabled: true };
 
 export const AudioProvider = ({ children }) => {
-    // אתחול ה-Scope
+    // אתחול ה-Scope (איזה משחק רץ עכשיו)
     const [scope, setScope] = useState('GLOBAL');
     
-    // אתחול הגדרות גלובליות
+    // הגדרות גלובליות (מיוט כללי, רטט)
     const [globalSettings, setGlobalSettings] = useState(() => {
         try {
             const saved = localStorage.getItem('vocab_global_audio');
@@ -19,7 +19,7 @@ export const AudioProvider = ({ children }) => {
         } catch (e) { return DEFAULT_GLOBAL_SETTINGS; }
     });
 
-    // אתחול הגדרות מקומיות
+    // הגדרות מקומיות (לכל משחק בנפרד)
     const [audioSettings, setAudioSettings] = useState(() => {
         try {
             const saved = localStorage.getItem('audio_settings_GLOBAL');
@@ -27,52 +27,50 @@ export const AudioProvider = ({ children }) => {
         } catch (e) { return DEFAULT_LOCAL_SETTINGS; }
     });
 
+    // רכיבי האודיו
     const audioCtxRef = useRef(null);
     const calmTrack = useRef(new Audio('/sounds/calm.mp3'));
     const tensionTrack = useRef(new Audio('/sounds/tension.mp3'));
     const currentTrack = useRef(null); 
     const activeTrackId = useRef(null); 
-    const playPromiseRef = useRef(null);
-    
-    // State לקולות TTS
+    const isPlayingRef = useRef(false); // מעקב אחרי כוונת הניגון למניעת התנגשויות
+
+    // TTS State
     const [availableVoices, setAvailableVoices] = useState([]);
     const [selectedVoice, setSelectedVoice] = useState(null);
 
-    // אתחול ווליום ראשוני
+    // אתחול ראשוני של רצועות השמע
     useEffect(() => {
         calmTrack.current.loop = true;
         calmTrack.current.volume = 0.35;
+        calmTrack.current.preload = 'auto';
+
         tensionTrack.current.loop = true;
         tensionTrack.current.volume = 0.5;
+        tensionTrack.current.preload = 'auto';
     }, []);
 
-    // שמירה של הגדרות גלובליות (Mute/Vibrate) בלבד ב-useEffect
+    // שמירה ויישום של הגדרות גלובליות
     useEffect(() => {
         localStorage.setItem('vocab_global_audio', JSON.stringify(globalSettings));
         if (globalSettings.isMuted) {
             stopMusic(false);
             window.speechSynthesis.cancel();
         } else {
+            // אם ביטלנו מיוט, נסה להחזיר את המוזיקה
             if (audioSettings.music && activeTrackId.current) playMusic(activeTrackId.current);
         }
     }, [globalSettings]);
 
-    // *** השינוי הגדול: מחקנו את ה-useEffect ששמר את audioSettings באופן אוטומטי ***
-    // זה מונע את דריסת ההגדרות במעבר בין משחקים
-
-    // --- החלפת SCOPE (משחק חדש) ---
+    // החלפת Scope (כניסה למשחק חדש)
     const setGameScope = (newScope) => {
         if (scope === newScope) return;
-
-        // 1. קריאה מהזיכרון עבור המשחק החדש
         const savedNew = localStorage.getItem(`audio_settings_${newScope}`);
         const nextSettings = savedNew ? JSON.parse(savedNew) : { ...DEFAULT_LOCAL_SETTINGS };
-
-        // 2. עדכון ה-State (בלי לשמור לזיכרון!)
         setScope(newScope);
         setAudioSettings(nextSettings);
 
-        // 3. טיפול במוזיקה בהתאם להגדרות החדשות שנטענו
+        // ניהול מוזיקה לפי ההגדרות של המשחק החדש
         if (!nextSettings.music || globalSettings.isMuted) {
             stopMusic(false);
         } else if (nextSettings.music && !globalSettings.isMuted && activeTrackId.current) {
@@ -80,48 +78,44 @@ export const AudioProvider = ({ children }) => {
         }
     };
 
-    // --- שינוי הגדרה (לחיצה של משתמש) ---
+    // שינוי הגדרה ספציפית
     const toggleSetting = (key, value) => {
         setAudioSettings(prev => {
             const newVal = value !== undefined ? value : !prev[key];
             const newSettings = { ...prev, [key]: newVal };
-            
-            // *** שמירה לזיכרון מתבצעת רק כאן, בפעולה יזומה ***
             localStorage.setItem(`audio_settings_${scope}`, JSON.stringify(newSettings));
 
-            // לוגיקה ספציפית למוזיקה
             if (key === 'music') {
                 if (!newVal) {
                     if (currentTrack.current) currentTrack.current.pause();
                 } else {
-                    if (!globalSettings.isMuted && activeTrackId.current) playMusic(activeTrackId.current);
+                    // תיקון התאוששות: אם הדלקנו מוזיקה, נסה לנגן מיד (Force play)
+                    if (!globalSettings.isMuted && activeTrackId.current) {
+                        playMusic(activeTrackId.current, true);
+                    }
                 }
             }
             return newSettings;
         });
     };
 
-    // --- איפוס הגדרות ---
+    // איפוס הגדרות ברירת מחדל
     const resetToDefaults = () => {
-        // איפוס State
         setAudioSettings(DEFAULT_LOCAL_SETTINGS);
         setGlobalSettings(DEFAULT_GLOBAL_SETTINGS);
-        
-        // מחיקה מהזיכרון
         localStorage.removeItem(`audio_settings_${scope}`);
         localStorage.removeItem('vocab_global_audio');
         localStorage.removeItem('selected_voice_name');
-
-        // איפוס קול
+        
         const defaultVoice = availableVoices.find(v => v.default) || availableVoices[0];
         if (defaultVoice) setSelectedVoice(defaultVoice);
 
-        // הפעלת מוזיקה מחדש אם צריך
         if (activeTrackId.current) {
             setTimeout(() => playMusic(activeTrackId.current), 50);
         }
     };
 
+    // אתחול Web Audio API (לאפקטים)
     const initAudioCtx = () => {
         if (!audioCtxRef.current) {
             const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -131,7 +125,7 @@ export const AudioProvider = ({ children }) => {
         return audioCtxRef.current;
     };
 
-    // --- אפקטים קוליים (הגרסה המתוקנת והמלאה) ---
+    // מנגנון האפקטים (Synthesizer)
     const playSFX = (type, value = 0) => {
         if (globalSettings.isMuted || !audioSettings.sfx) return;
         const ctx = initAudioCtx();
@@ -155,29 +149,24 @@ export const AudioProvider = ({ children }) => {
                 break;
 
             case 'MATCH_SUCTION': 
-                // רעש לבן עם ווליום אגרסיבי (3.0)
                 const bufferSize = ctx.sampleRate * 0.6; 
                 const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
                 const data = buffer.getChannelData(0);
                 for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
                 const noise = ctx.createBufferSource();
                 noise.buffer = buffer;
-                
                 const filter = ctx.createBiquadFilter();
                 filter.type = 'lowpass';
                 filter.frequency.setValueAtTime(300, t);
                 filter.frequency.exponentialRampToValueAtTime(1800, t + 0.4); 
-                
                 const nGain = ctx.createGain();
-                nGain.gain.setValueAtTime(3.0, t); // בוסט לווליום
+                nGain.gain.setValueAtTime(3.0, t); 
                 nGain.gain.exponentialRampToValueAtTime(0.01, t + 0.4); 
-                
                 noise.connect(filter);
                 filter.connect(nGain);
                 nGain.connect(ctx.destination);
                 noise.start(t);
-
-                // בום נמוך
+                
                 const thud = ctx.createOscillator();
                 const thudGain = ctx.createGain();
                 thud.type = 'sine';
@@ -209,22 +198,18 @@ export const AudioProvider = ({ children }) => {
                 break;
 
             case 'SWIPE_RIGHT': 
-                // Lowpass (אוויר) במקום סנר
                 const sNoise = ctx.createBufferSource();
                 const sBuff = ctx.createBuffer(1, ctx.sampleRate * 0.3, ctx.sampleRate);
                 const sData = sBuff.getChannelData(0);
                 for (let i = 0; i < sBuff.length; i++) sData[i] = Math.random() * 2 - 1;
                 sNoise.buffer = sBuff;
-                
                 const sFilter = ctx.createBiquadFilter();
-                sFilter.type = 'lowpass'; // Lowpass
+                sFilter.type = 'lowpass'; 
                 sFilter.frequency.setValueAtTime(600, t);
                 sFilter.frequency.linearRampToValueAtTime(100, t + 0.2);
-                
                 const sGain = ctx.createGain();
                 sGain.gain.setValueAtTime(0.8, t);
                 sGain.gain.linearRampToValueAtTime(0, t + 0.2);
-                
                 sNoise.connect(sFilter);
                 sFilter.connect(sGain);
                 sGain.connect(ctx.destination);
@@ -273,41 +258,52 @@ export const AudioProvider = ({ children }) => {
         }
     };
 
-    const playMusic = async (type = 'CALM') => {
+    // Safe Play: ניגון מוזיקה עם מנגנון הגנה מפני קריסות
+    const playMusic = async (type = 'CALM', force = false) => {
         activeTrackId.current = type;
         if (globalSettings.isMuted || !audioSettings.music) return;
+
+        // אם כבר מנגן, לא עושים כלום אלא אם זה בכוח (Force)
+        if (!force && currentTrack.current && !currentTrack.current.paused && activeTrackId.current === type) {
+            return;
+        }
+
+        // עוצרים בזהירות טראק קודם
         if (currentTrack.current) {
             currentTrack.current.pause();
-            currentTrack.current.currentTime = 0;
         }
-        let track = null;
-        if (type === 'CALM') track = calmTrack.current;
-        else if (type === 'TENSION') track = tensionTrack.current;
 
-        if (track) {
-            currentTrack.current = track;
-            try {
-                playPromiseRef.current = track.play();
-                await playPromiseRef.current;
-            } catch (e) {
-                calmTrack.current.load();
-                tensionTrack.current.load();
+        let track = (type === 'CALM') ? calmTrack.current : tensionTrack.current;
+        
+        // מוודאים ווליום נכון לפני הניגון
+        track.volume = (type === 'TENSION') ? 0.5 : 0.35;
+        
+        currentTrack.current = track;
+
+        try {
+            isPlayingRef.current = true;
+            await track.play();
+        } catch (e) {
+            console.warn("Audio play interrupted, retrying...", e);
+            // מנגנון Retry חכם במקום איפוס הנגן
+            if (activeTrackId.current === type && isPlayingRef.current) {
+                setTimeout(() => {
+                    if (activeTrackId.current === type) track.play().catch(err => console.error("Retry failed", err));
+                }, 100);
             }
         }
     };
 
     const stopMusic = (clearIntent = true) => {
+        isPlayingRef.current = false;
         if (currentTrack.current) {
-            if (playPromiseRef.current !== undefined) {
-                playPromiseRef.current.then(() => currentTrack.current.pause()).catch(() => {});
-            } else {
-                currentTrack.current.pause();
-            }
+            currentTrack.current.pause();
+            currentTrack.current.currentTime = 0; 
         }
         if (clearIntent) activeTrackId.current = null;
     };
 
-    // --- TTS ---
+    // --- TTS (דיבור) ---
     useEffect(() => {
         const loadVoices = () => {
             const voices = window.speechSynthesis.getVoices();
@@ -329,17 +325,44 @@ export const AudioProvider = ({ children }) => {
 
     const speak = (text, force = false) => {
         if (globalSettings.isMuted || (!audioSettings.tts && !force) || !text) return;
+        
         window.speechSynthesis.cancel(); 
-        if (audioSettings.music && currentTrack.current && !globalSettings.isMuted) currentTrack.current.volume = 0.05;
+
+        // תיקון קריטי: שחזור ווליום *לפני* התחלת דיבור חדש
+        // מונע באג שבו הווליום נשאר נמוך אם הדיבור הקודם נקטע
+        if (audioSettings.music && currentTrack.current && !globalSettings.isMuted) {
+             const targetVol = (activeTrackId.current === 'TENSION') ? 0.5 : 0.35;
+             currentTrack.current.volume = targetVol;
+        }
+
         const utterance = new SpeechSynthesisUtterance(text);
         if (selectedVoice) utterance.voice = selectedVoice;
         utterance.lang = 'en-US'; 
         utterance.rate = audioSettings.voiceSpeed; 
-        utterance.onend = () => {
+
+        // הנמכת ווליום כשהדיבור מתחיל
+        utterance.onstart = () => {
             if (audioSettings.music && currentTrack.current && !globalSettings.isMuted) {
-                currentTrack.current.volume = (activeTrackId.current === 'TENSION') ? 0.5 : 0.35; 
+                currentTrack.current.volume = 0.05;
             }
         };
+
+        // החזרת ווליום כשהדיבור מסתיים
+        utterance.onend = () => {
+            if (audioSettings.music && currentTrack.current && !globalSettings.isMuted) {
+                const targetVol = (activeTrackId.current === 'TENSION') ? 0.5 : 0.35;
+                currentTrack.current.volume = targetVol;
+            }
+        };
+        
+        // החזרת ווליום גם במקרה של שגיאה
+        utterance.onerror = () => {
+             if (audioSettings.music && currentTrack.current) {
+                const targetVol = (activeTrackId.current === 'TENSION') ? 0.5 : 0.35;
+                currentTrack.current.volume = targetVol;
+            }
+        };
+
         window.speechSynthesis.speak(utterance);
     };
 

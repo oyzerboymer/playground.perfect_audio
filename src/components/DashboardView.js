@@ -102,7 +102,7 @@ export default function DashboardView({ setView, user }) {
                     <MenuCard icon={TrendingUp} title="התקדמות" subtitle="ניהול ידע" color="indigo" onClick={() => setView('PROGRESS')}/>
                 </div>
                 <div className="mt-auto pt-4 text-center">
-                    <p className="text-[10px] text-gray-300">גרסה 4.0 • נבנה באהבה</p>
+                    <p className="text-[10px] text-gray-300">גרסה 5.0 • נבנה באהבה והשקעה</p>
                     <p className="text-xs text-gray-400 font-medium mt-1">✨ שכוייח לעויזר, אהרן, וג'מיני</p>
                 </div>
             </div>

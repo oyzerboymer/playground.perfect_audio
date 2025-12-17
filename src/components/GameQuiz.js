@@ -3,17 +3,19 @@ import { Clock, Loader2, Languages, Edit3, Zap, Brain, Check, AlertTriangle } fr
 import { Header, Button } from './UIComponents';
 import GameLobby from './GameLobby';
 import { useAudio } from '../contexts/AudioContext';
-import { shuffleArray, getQuizFontSize, getScoreColorClass, getHebrewLabel, getNextManualScore } from '../utils';
+// שינוי 1: ייבוא הפונקציה החדשה getQuizStyle
+import { shuffleArray, getScoreColorClass, getHebrewLabel, getNextManualScore, getQuizStyle } from '../utils';
 
+// שינוי 2: הוספת ברירת המחדל
 const DEFAULT_QUIZ_SETTINGS = {
     isSmartMode: true,
     wordSource: { unseen: true, learn: true, weak: true, known: true },
     questionCount: 20,
-    timerDuration: 5, // תיקון: 5 שניות
-    panicThreshold: 3 
+    timerDuration: 5,
+    panicThreshold: 3,
+    languageMode: 'MIX' // ברירת מחדל למצב מעורב
 };
 
-// הגדרות עיצוב לקטגוריות בעברית
 const CATEGORY_CONFIG = {
     unseen: { label: 'חדש', color: 'gray' },
     learn: { label: 'למידה', color: 'indigo' },
@@ -21,7 +23,7 @@ const CATEGORY_CONFIG = {
     known: { label: 'יודע', color: 'green' }
 };
 
-export default function QuizGame({ words, updateWord, setView, onGameFinish  }) {
+export default function QuizGame({ words, updateWord, setView, onGameFinish }) {
     const [settings, setSettings] = useState(() => {
         try {
             const saved = localStorage.getItem('quiz_settings');
@@ -56,7 +58,6 @@ export default function QuizGame({ words, updateWord, setView, onGameFinish  }) 
       };
     }, []);
 
-    // לוגיקת טיימר
     useEffect(() => {
         if (!isPlaying || showSummary || feedback) return;
         
@@ -74,13 +75,11 @@ export default function QuizGame({ words, updateWord, setView, onGameFinish  }) 
 
 
     const startGame = () => {
-        // === לוגיקה מקורית (אלגוריתם חכם) ===
         const totalWords = words.length;
         const touchedWords = words.filter(w => w.score > 0).length;
         const progress = totalWords > 0 ? Math.round((touchedWords / totalWords) * 100) : 0;
 
         let dist = { unseen: 0, learn: 0, weak: 0, known: 0 };
-        // חלוקת אחוזים לפי התקדמות
         if (progress <= 10) dist = { unseen: 100, learn: 0, weak: 0, known: 0 };
         else if (progress <= 30) dist = { unseen: 90, learn: 0, weak: 10, known: 0 };
         else if (progress <= 60) dist = { unseen: 65, learn: 10, weak: 20, known: 5 };
@@ -113,7 +112,6 @@ export default function QuizGame({ words, updateWord, setView, onGameFinish  }) 
                 qWords = [...qWords, ...backup.slice(0, target - qWords.length)];
             }
         } else {
-            // מצב ידני
             const pool = words.filter(w => {
                 if (w.score === 0 && settings.wordSource.unseen) return true;
                 if (w.score >= 1 && w.score <= 2 && settings.wordSource.learn) return true;
@@ -130,7 +128,12 @@ export default function QuizGame({ words, updateWord, setView, onGameFinish  }) 
         }
 
         const qList = shuffleArray(qWords).map(word => {
-            const isEngQuestion = Math.random() > 0.5;
+            // שינוי 3: לוגיקת בחירת שפה לפי ההגדרות
+            let isEngQuestion = true;
+            if (settings.languageMode === 'EN') isEngQuestion = true;
+            else if (settings.languageMode === 'HE') isEngQuestion = false;
+            else isEngQuestion = Math.random() > 0.5;
+
             const distractors = shuffleArray(words.filter(w => w.id !== word.id)).slice(0, 3);
             return {
                 word,
@@ -159,7 +162,6 @@ export default function QuizGame({ words, updateWord, setView, onGameFinish  }) 
         setFeedback(isCorrect ? 'CORRECT' : 'WRONG');
         setIsPanic(panic);
         
-        // --- 1. סאונד מיידי ---
         if (isCorrect) {
             playSFX('CORRECT'); 
             setScoreCount(s => s + 1);
@@ -188,13 +190,11 @@ export default function QuizGame({ words, updateWord, setView, onGameFinish  }) 
 
         setSessionResults(prev => [...prev, { ...q.word, score: newScore, correct: isCorrect }]);
 
-        // --- 2. דיליי ל-TTS ---
         let delay = 1200; 
-
         if (audioSettings.tts) {
             setTimeout(() => {
                  speak(q.word.english);
-            }, 400); // מחכה קצת אחרי הדינג
+            }, 400); 
             delay = 1800;
         }
 
@@ -259,7 +259,27 @@ export default function QuizGame({ words, updateWord, setView, onGameFinish  }) 
                             </div>
                         )}
 
+                        {/* שינוי 4: ממשק בחירת שפה בלובי */}
                         <div className="space-y-4 pt-4 border-t border-gray-100">
+                             <div>
+                                <label className="text-sm font-bold text-gray-700 block mb-2">שפת השאלה</label>
+                                <div className="flex bg-gray-100 p-1 rounded-xl">
+                                    {[
+                                        {id: 'MIX', label: 'מעורב'},
+                                        {id: 'EN', label: 'אנגלית'}, 
+                                        {id: 'HE', label: 'עברית'}
+                                    ].map(opt => (
+                                        <button 
+                                            key={opt.id} 
+                                            onClick={() => setSettings({...settings, languageMode: opt.id})} 
+                                            className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${settings.languageMode === opt.id ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-400'}`}
+                                        >
+                                            {opt.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
                             <div>
                                 <div className="flex justify-between mb-2">
                                     <label className="text-sm font-bold text-gray-700">זמן לשאלה</label>
@@ -333,9 +353,16 @@ export default function QuizGame({ words, updateWord, setView, onGameFinish  }) 
             
             <div className="flex-none h-[35%] flex items-center justify-center w-full p-6 pb-2">
                 <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 w-full h-full flex flex-col items-center justify-center p-6 text-center overflow-hidden relative">
-                    <h2 dir="ltr" style={{ fontSize: q.isEngQuestion ? getQuizFontSize(q.questionText) : '2.2rem' }} className="font-bold text-gray-800 whitespace-nowrap w-full px-2 leading-tight">
+                    
+                    {/* שינוי 5: שימוש בפונקציה החדשה getQuizStyle */}
+                    <h2 
+                        dir="ltr" 
+                        style={getQuizStyle(q.questionText, q.isEngQuestion)} 
+                        className="font-bold text-gray-800 w-full px-2"
+                    >
                         {q.questionText}
                     </h2>
+                    
                     <p className="text-gray-400 mt-2 text-sm font-medium">בחר את התרגום הנכון</p>
                     
                     <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-100">

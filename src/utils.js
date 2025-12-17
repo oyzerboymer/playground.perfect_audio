@@ -51,4 +51,21 @@ export const getNextManualScore = (currentScore) => {
     return 1;
 };
 
-export const getQuizFontSize = (text) => text.length > 8 ? '1.6rem' : '2.1rem';
+// --- פונקציה חדשה לעיצוב חכם בחידון ---
+export const getQuizStyle = (text, isEnglish) => {
+    // לוגיקה לאנגלית: שורה אחת בלבד
+    if (isEnglish) {
+        return {
+            fontSize: text.length >= 10 ? '1.4rem' : '1.8rem',
+            whiteSpace: 'nowrap', 
+            lineHeight: '1.2'
+        };
+    }
+
+    // לוגיקה לעברית: מאפשר ירידת שורה
+    return {
+        fontSize: text.length >= 20 ? '1.5rem' : '1.8rem',
+        whiteSpace: 'normal', 
+        lineHeight: '1.3'
+    };
+};
